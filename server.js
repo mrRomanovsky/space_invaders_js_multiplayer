@@ -8,7 +8,7 @@ server.listen(8000);
 var EurecaServer = require('eureca.io').EurecaServer;
  
 //create an instance of EurecaServer
-var eurecaServer = new EurecaServer({allow:['setId', 'spawnPlayer', 'kill', 'updateState']});
+var eurecaServer = new EurecaServer({allow:['setId', 'spawnPlayer', 'kill', 'updateState', 'fire', 'alienKill', 'hitPlayer', 'restart', 'fireEnemyBullet']});
  
 //attach eureca.io to our http server
 eurecaServer.attach(server);
@@ -73,4 +73,67 @@ eurecaServer.exports.handleKeys = function (keys) {
         //keep last known state so we can send it to new connected clients
         clients[c].laststate = keys;
     }
+}
+
+eurecaServer.exports.fire = function () {
+    var conn = this.connection;
+    var updatedClientId = clients[conn.id].id;
+
+    for (var c in clients) {
+        var remote = clients[c].remote;
+        remote.fire(updatedClientId);
+    }
+}
+
+eurecaServer.exports.killAlien = function(bulletIdx, alienIdx) {
+    var conn = this.connection;
+    var updatedClientId = clients[conn.id].id;
+    console.log("I'm here!");
+    for (var c in clients) {
+        var remote = clients[c].remote;
+        if (remote.id != updatedClientId)
+            remote.alienKill(updatedClientId, bulletIdx, alienIdx);
+    }
+}
+
+eurecaServer.exports.hitPlayer = function(bulletIdx) {
+    var conn = this.connection;
+    var updatedClientId = clients[conn.id].id;
+    console.log("I'm here!");
+    for (var c in clients) {
+        var remote = clients[c].remote;
+        if (remote.id != updatedClientId)
+            remote.hitPlayer(updatedClientId, bulletIdx);
+    }
+}
+
+eurecaServer.exports.restart = function() {
+    var conn = this.connection;
+    var updatedClientId = clients[conn.id].id;
+    for (var c in clients) {
+        var remote = clients[c].remote;
+        if (remote.id != updatedClientId)
+            remote.restart();
+    }   
+}
+
+//to synchronize clients waiting for enemy bullets
+var enemyFireTick = 0;
+
+eurecaServer.exports.enemyFires = function(enemiesCnt) {
+    ++enemyFireTick;
+    if (enemyFireTick < clients.length)
+        return;
+    var conn = this.connection;
+    var updatedClientId = clients[conn.id].id;
+    enemyFireTick = 0;
+    var random = getRandomInt(enemiesCnt);
+    for (var c in clients) {
+         var remote = clients[c].remote;
+             remote.fireEnemyBullet(random, updatedClientId);
+    }  
+}
+
+function getRandomInt(max) {
+  return Math.floor(Math.random() * Math.floor(max));
 }

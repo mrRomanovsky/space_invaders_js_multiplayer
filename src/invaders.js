@@ -34,6 +34,11 @@ var eurecaClientSetup = function() {
             players[id].kill();
             console.log('killing ', id, players[id]);
         }
+    }
+
+    eurecaClient.exports.fire = function(id) {
+        if (id != myId)
+            players[id].fireBullet();
     }   
     
     eurecaClient.exports.spawnPlayer = function(i, x, y)
@@ -54,7 +59,92 @@ var eurecaClientSetup = function() {
             players[id].ship.y = state.y;
             players[id].update();
         }
-    } 
+    }
+
+    eurecaClient.exports.alienKill = function(playerIdx, bulletIdx, alienIdx) {
+        alien = aliens.children[alienIdx];
+        if (alien && alien.alive) {
+            console.log("Killing!!");
+            alien.kill();
+        }
+        var bullet = players[playerIdx].bullets.children[bulletIdx];
+        bullet.kill();
+        var explosion = explosions.getFirstExists(false);
+        explosion.reset(alien.body.x, alien.body.y);
+        explosion.play('kaboom', 30, false, true);
+        if (aliens.countLiving() == 0) {
+            score += 1000;
+            scoreText.text = scoreString + score;
+
+            enemyBullets.callAll('kill');
+            stateText.text = " You Won, \n Click to restart";
+            stateText.visible = true;
+
+            //the "click to restart" handler
+            game.input.onTap.addOnce(restart,this);
+        }
+    }
+
+    eurecaClient.exports.hitPlayer = function(playerIdx, bulletIdx) {
+        var bullet = enemyBullets.children[bulletIdx];
+        bullet.kill();
+        var playerHit = players[playerIdx];
+        var live = playerHit.lives.getFirstAlive();
+        if (live)
+            live.kill();
+        //  And create an explosion :)
+        var explosion = explosions.getFirstExists(false);
+        explosion.reset(playerHit.ship.body.x, playerHit.ship.body.y);
+        explosion.play('kaboom', 30, false, true);
+
+        // When the player dies
+        if (playerHit.lives.countLiving() < 1)
+        {
+            playerHit.ship.kill();
+            enemyBullets.callAll('kill');
+
+            stateText.text=" GAME OVER \n Click to restart";
+            stateText.visible = true;
+
+            //the "click to restart" handler
+            game.input.onTap.addOnce(restart,this);
+        }
+    }
+
+    eurecaClient.exports.restart = function () {
+
+    //  A new level starts
+    
+    //resets the life count
+    for (var i in players)
+    {
+       players[i].lives.callAll('revive');    //  And brings the aliens back from the dead :)
+           //revives the player
+       players[myId].ship.revive();
+    }
+    aliens.removeAll();
+    createAliens();
+    //hides the text
+    stateText.visible = false;
+    }
+    
+    //playerId - ship towards which the bullets are launched(last one asked for enemy bullets)
+    eurecaClient.exports.fireEnemyBullet = function (random, playerId) {
+
+        aliens.forEachAlive(function(alien){
+            livingEnemies.push(alien);
+        });
+
+        enemyBullet = enemyBullets.getFirstExists(false)
+
+        if (enemyBullet && livingEnemies.length > 0) {
+            var shooter=livingEnemies[random];
+            enemyBullet.reset(shooter.body.x, shooter.body.y);
+            game.physics.arcade.moveToObject(enemyBullet,players[playerId].ship,120);
+            firingTimer = game.time.now + 2000;
+        }
+    }
+ 
 }
 
 var game = new Phaser.Game(800, 600, Phaser.AUTO, 'phaser-example', { preload: preload, create: eurecaClientSetup, update: update, render: render });
@@ -117,7 +207,8 @@ Spaceship = function(index, game, player) {
 
     var x = 400;
     var y = 500;
-
+    
+    this.idx = index;
     this.ship = game.add.sprite(x, y, 'ship');
     this.ship.anchor.setTo(0.5, 0.5);
     this.ship.id = index;
@@ -190,6 +281,7 @@ Spaceship.prototype.fireBullet = function() {
             bullet.reset(this.ship.x, this.ship.y + 8);
             bullet.body.velocity.y = -400;
             bulletTime = game.time.now + 200;
+            eurecaServer.fire(myId);
         }
     }
 }
@@ -311,16 +403,17 @@ function update() {
         players[myId].update();
 
         //  Run collision
-        game.physics.arcade.overlap(player.bullets, aliens, collisionHandler, null, this);
+        game.physics.arcade.overlap(player.bullets, aliens, collisionHandler, null, player);
         game.physics.arcade.overlap(enemyBullets, players[myId].ship, enemyHitsPlayer, null, players[myId]);
     }
         
     for (var i in players) {
         if (!players[i]) continue;
         if (i != myId && players[i].alive) {
-            game.physics.arcade.overlap(players[i].bullets, aliens, collisionHandler, null, this);
-            game.physics.arcade.overlap(enemyBullets, players[i].ship, enemyHitsPlayer, null, players[i]);
             players[i].update();
+            console.log("I'm here!(not your player!)");
+            game.physics.arcade.overlap(players[i].bullets, aliens, collisionHandler, null, players[i]);
+            game.physics.arcade.overlap(enemyBullets, players[i].ship, enemyHitsPlayer, null, players[i]);
             players[i].ship.body.velocity.setTo(0, 0);
         }
     }
@@ -339,9 +432,11 @@ function render() {
 
 }
 
-function collisionHandler (bullet, alien) {
+function collisionHandler(bullet, alien) {
 
     //  When a bullet hits an alien we kill them both
+    console.log("Hello! collision handler!!");
+    eurecaServer.killAlien(this.bullets.getChildIndex(bullet), aliens.getChildIndex(alien));
     bullet.kill();
     alien.kill();
 
@@ -366,10 +461,12 @@ function collisionHandler (bullet, alien) {
         //the "click to restart" handler
         game.input.onTap.addOnce(restart,this);
     }
-
 }
 
+
 function enemyHitsPlayer (ship,bullet) {
+
+    eurecaServer.hitPlayer(enemyBullets.getChildIndex(bullet));
     
     bullet.kill();
 
@@ -413,11 +510,12 @@ function enemyFires () {
         livingEnemies.push(alien);
     });
 
+    eurecaServer.enemyFires(livingEnemies.length);
 
-    if (enemyBullet && livingEnemies.length > 0)
+    /*if (enemyBullet && livingEnemies.length > 0)
     {
         
-        var random=game.rnd.integerInRange(0,livingEnemies.length-1);
+        //var random=game.rnd.integerInRange(0,livingEnemies.length-1);
 
         // randomly select one of them
         var shooter=livingEnemies[random];
@@ -426,7 +524,7 @@ function enemyFires () {
 
         game.physics.arcade.moveToObject(enemyBullet,players[myId].ship,120);
         firingTimer = game.time.now + 2000;
-    }
+    }*/
 
 }
 
@@ -452,5 +550,7 @@ function restart () {
     players[myId].ship.revive();
     //hides the text
     stateText.visible = false;
+
+    eurecaServer.restart();
 
 }
